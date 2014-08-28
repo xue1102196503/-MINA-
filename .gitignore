@@ -1,0 +1,138 @@
+使用MINA框架，直接看代码:
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import org.apache.mina.core.buffer.IoBuffer;
+import org.apache.mina.core.service.IoAcceptor;
+import org.apache.mina.core.service.IoHandlerAdapter;
+import org.apache.mina.core.session.IdleStatus;
+import org.apache.mina.core.session.IoSession;
+import org.apache.mina.transport.socket.nio.NioSocketAcceptor;
+
+public class MinaServer {
+	public static void main(String[] args) {
+
+		IoAcceptor acceptor = new NioSocketAcceptor();
+
+		acceptor.getSessionConfig().setReadBufferSize(2048);// 缓存大小
+		acceptor.getSessionConfig().setIdleTime(IdleStatus.BOTH_IDLE, 10);// 若10秒无操作进入空闲状态
+
+		// acceptor.getFilterChain().addLast(
+		// "codec",
+		// new ProtocolCodecFilter(new TextLineCodecFactory(
+		// CharsetUtil.UTF_8)));
+
+		// acceptor.getFilterChain().addLast("codec",
+		// new ProtocolCodecFilter(new ObjectSerializationCodecFactory()));
+
+		acceptor.setHandler(new IoHandlerAdapter() {
+
+			@Override
+			public void exceptionCaught(IoSession session, Throwable cause)
+					throws Exception {
+				session.close(true);
+			}
+
+			@Override
+			public void messageReceived(IoSession session, Object message)
+					throws Exception {
+				System.out.println("messageReceived start");
+
+				IoBuffer bufferRe = (IoBuffer) message;
+				String resultStr = new String(bufferRe.array(), "UTF-8");
+				System.out.println(resultStr.toString());
+
+				IoBuffer buffer = IoBuffer.wrap("Hello,i'm server"
+						.getBytes("UTF-8"));
+				session.write(buffer);
+			}
+
+			@Override
+			public void messageSent(IoSession session, Object message)
+					throws Exception {
+				System.out.println("messageSent start");
+			}
+
+		});
+
+		try {
+			acceptor.bind(new InetSocketAddress(HOSTIP, PORT));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+	}
+}
+
+
+客户端采用了java.nio，看代码
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.Iterator;
+
+public class SocketCli {
+
+	public static void main(String[] arg) {
+		try {
+			SocketChannel mSocketChannel = SocketChannel
+					.open(new InetSocketAddress(HOSTIP, PORT));
+			if (mSocketChannel != null) {
+				mSocketChannel.socket().setTcpNoDelay(false);
+				mSocketChannel.socket().setKeepAlive(true);
+				mSocketChannel.socket().setSoTimeout(60 * 1000);
+				mSocketChannel.configureBlocking(false);
+				Selector mSelector = Selector.open();
+				SelectionKey sk = null;
+				if (mSelector != null) {
+					sk = mSocketChannel.register(mSelector,
+							SelectionKey.OP_READ);
+				}
+
+				JsonUtls ju = new JsonUtls();
+				String data = ju.setHeartJsonData();
+				ByteBuffer bytebuffer = ByteBuffer.wrap(data.getBytes("UTF-8"));
+				mSocketChannel.write(bytebuffer);
+				bytebuffer.flip();
+				bytebuffer.clear();
+
+				while (mSelector.select() > 0) {
+					System.out.println("SocketInputStream select > 0");
+					Iterator<SelectionKey> iterator = mSelector.selectedKeys()
+							.iterator();
+					while (iterator.hasNext()) {
+						System.out.println("SocketInputStream hasNext > 0");
+						SelectionKey selectionkey = iterator.next();
+						if (selectionkey.isReadable()) {
+							SocketChannel socketChannel = (SocketChannel) selectionkey
+									.channel();
+							ByteBuffer bytebuffer1 = ByteBuffer.allocate(1024);
+							socketChannel.read(bytebuffer1);
+							bytebuffer.flip();
+							String resultStr = new String(bytebuffer1.array(),
+									"UTF-8");
+							// String resultStr =
+							// Charset.forName("UTF-8").newDecoder()
+							// .decode(bytebuffer).toString();
+							System.out.println("返回值>>>>>>>" + resultStr);
+							bytebuffer.clear();
+							bytebuffer = null;
+							// resultStr = null;
+
+							// 为下一次读取做准备
+							selectionkey.interestOps(SelectionKey.OP_READ);
+							iterator.remove();
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+}
+
+已经测试，放心使用；
+
+唯一注意的是，MINA框架，收发消息都是ByteBuffer.
